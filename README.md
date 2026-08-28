@@ -6,8 +6,8 @@ The web app connects a Studio wallet to register baselines, request consensus
 assessment for a candidate policy URL, submit a challenge, resolve it, finalize
 an eligible change, and read exact persistent contract records.
 
-- Contract: `0x229C614e7dD1A2B00df227f11402aB5dC1E1b828`
-- Explorer: https://explorer-studio.genlayer.com/address/0x229C614e7dD1A2B00df227f11402aB5dC1E1b828
+- Contract v2: `0x2AA8243bBF30148557Bdbf6f34aC07c31DACea41`
+- Explorer: https://explorer-studio.genlayer.com/address/0x2AA8243bBF30148557Bdbf6f34aC07c31DACea41
 - Source: https://github.com/klopp78/policychangegate-genlayer
 
 PolicyChangeGate is a challengeable authorization workflow for public policy,
@@ -24,12 +24,16 @@ resolves a challenge using independent counter-evidence.
 4. The owner can `resolve_challenge`, creating `UPHELD` or `OVERTURNED`.
 5. Only an unchallenged consensus-approved assessment may `finalize_change` and advance the baseline.
 
-Every assessment is stored by ID, retains the accepted-write sequence, and can
-be retrieved with `get_assessment`. Validators compare structured decisions and
-stable URL provenance commitments rather than exact dynamic page HTML.
+Every assessment is stored by its contract-generated `chg_*` ID, retains the
+accepted-write sequence, a 24-hour challenge deadline, retry ancestry, and
+immutable URL/rendered-source commitments. An upheld challenge can finalize
+only after the window closes; an overturned challenge releases the policy for a
+new `retry_change` assessment. Validators compare structured decisions and
+stable commitments rather than exact dynamic page HTML.
 
 ## Verification
 
 ```powershell
 python scripts/check_contract.py
+python tests/test_lifecycle.py
 ```
