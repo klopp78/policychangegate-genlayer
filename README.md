@@ -1,5 +1,15 @@
 # PolicyChangeGate for GenLayer
 
+## Interactive project
+
+The web app connects a Studio wallet to register baselines, request consensus
+assessment for a candidate policy URL, submit a challenge, resolve it, finalize
+an eligible change, and read exact persistent contract records.
+
+- Contract: `0x229C614e7dD1A2B00df227f11402aB5dC1E1b828`
+- Explorer: https://explorer-studio.genlayer.com/address/0x229C614e7dD1A2B00df227f11402aB5dC1E1b828
+- Source: https://github.com/klopp78/policychangegate-genlayer
+
 PolicyChangeGate is a challengeable authorization workflow for public policy,
 specification, or governance-document changes. A policy owner registers an
 immutable baseline URL and rules, submits a candidate, receives a GenLayer
