@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { POLICY_CHANGE_GATE_ADDRESS, readAssessment, readLatestAssessmentId, readLatestPolicyId, readPolicy, writeGate, type WalletAddress } from "@/lib/genlayer";
+import { POLICY_CHANGE_GATE_ADDRESS, readAssessment, readAuditPack, readLatestAssessmentId, readLatestPolicyId, readPolicy, readPolicyTimeline, writeGate, type WalletAddress } from "@/lib/genlayer";
 
 declare global { interface Window { ethereum?: { request(args: { method: string }): Promise<unknown> } } }
 type Status = "ready" | "working" | "accepted" | "error";
@@ -20,6 +20,8 @@ export default function Home() {
   const [assessmentId, setAssessmentId] = useState("");
   const [challengeUrl, setChallengeUrl] = useState("https://docs.genlayer.com/developers/intelligent-contracts");
   const [record, setRecord] = useState("");
+  const [auditPack, setAuditPack] = useState("");
+  const [timeline, setTimeline] = useState("");
   const fail = (error: unknown) => { setStatus("error"); setMessage(error instanceof Error ? error.message : "The contract call did not complete."); };
   const load = async (kind: "policy" | "assessment", id: string) => {
     const value = kind === "policy" ? await readPolicy(id, wallet ?? undefined) : await readAssessment(id, wallet ?? undefined);
@@ -33,6 +35,41 @@ export default function Home() {
     const id = kind === "policy" ? policyId : assessmentId;
     if (!id) return fail(`Enter a ${kind} ID first.`);
     try { setStatus("working"); await load(kind, id); setStatus("ready"); setMessage(`${kind} ${id} loaded directly from contract storage.`); } catch (error) { fail(error); }
+  }
+  async function readAudit() {
+    if (!assessmentId) return fail("Enter a change ID before generating an audit pack.");
+    try {
+      setStatus("working");
+      const pack = asText(await readAuditPack(assessmentId, wallet ?? undefined));
+      setAuditPack(pack);
+      setStatus("ready");
+      setMessage(`Audit pack ${assessmentId} loaded from contract storage.`);
+    } catch (error) { fail(error); }
+  }
+  async function readTimeline() {
+    if (!policyId) return fail("Enter a policy ID before reading its timeline.");
+    try {
+      setStatus("working");
+      const value = asText(await readPolicyTimeline(policyId, wallet ?? undefined));
+      setTimeline(value);
+      setStatus("ready");
+      setMessage(`Timeline for ${policyId} loaded from contract storage.`);
+    } catch (error) { fail(error); }
+  }
+  async function copyAuditPack() {
+    if (!auditPack) return fail("Load an audit pack before copying it.");
+    try { await navigator.clipboard.writeText(auditPack); setStatus("ready"); setMessage("Audit pack copied."); } catch (error) { fail(error); }
+  }
+  function downloadAuditPack() {
+    if (!auditPack) return fail("Load an audit pack before downloading it.");
+    const blob = new Blob([auditPack], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${assessmentId || "policychangegate"}-audit-pack.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setMessage("Audit pack download prepared.");
   }
   async function write(action: string, args: string[], generated: "policy" | "assessment" | null) {
     if (!wallet) return fail("Connect a wallet before submitting a consensus write.");
@@ -54,6 +91,7 @@ export default function Home() {
       <div className="panel"><div className="panel-title"><span>01</span><h2>Register baseline</h2></div><label>Canonical policy URL<input value={policyUrl} onChange={(e) => setPolicyUrl(e.target.value)} /></label><label>Governance rules<textarea value={rules} onChange={(e) => setRules(e.target.value)} /></label><button onClick={() => write("register_policy", [policyUrl, rules], "policy")}>Register policy</button><div className="divider" /><label>Contract-generated policy ID<input value={policyId} onChange={(e) => setPolicyId(e.target.value)} placeholder="pol_1" /></label><button className="secondary" onClick={() => readRecord("policy")}>Read on-chain policy</button></div>
       <div className="panel"><div className="panel-title"><span>02</span><h2>Assess candidate</h2></div><label>Candidate policy URL<input value={candidateUrl} onChange={(e) => setCandidateUrl(e.target.value)} /></label><button onClick={() => write("assess_change", [policyId, candidateUrl], "assessment")}>Request consensus assessment</button><div className="divider" /><div className="panel-title"><span>03</span><h2>Challenge, resolve, retry</h2></div><label>Contract-generated change ID<input value={assessmentId} onChange={(e) => setAssessmentId(e.target.value)} placeholder="chg_1" /></label><label>Independent challenge evidence<input value={challengeUrl} onChange={(e) => setChallengeUrl(e.target.value)} /></label><div className="actions"><button className="secondary" onClick={() => write("challenge_change", [assessmentId, challengeUrl], null)}>Challenge</button><button className="secondary" onClick={() => write("resolve_challenge", [assessmentId], null)}>Resolve</button></div><div className="actions"><button className="secondary" onClick={() => write("retry_change", [assessmentId, candidateUrl], "assessment")}>Retry overturned change</button><button className="secondary" onClick={() => write("finalize_change", [assessmentId], null)}>Finalize after window</button></div><button className="secondary" onClick={() => readRecord("assessment")}>Read assessment</button></div>
       <aside className="record"><div className="panel-title"><span>Ledger</span><h2>Contract record</h2></div><p>Reads render the exact contract response. Generated IDs, challenge deadlines, source commitments, and retry ancestry come from on-chain state.</p><pre>{record || "No record loaded yet."}</pre><ul><li>24-hour immutable challenge window</li><li>Challenge uphold leads to finalize after window</li><li>Challenge overturn releases a policy for retry</li><li>URL and rendered-source commitments are persisted</li></ul></aside>
+      <section className="audit"><div className="panel-title"><span>04</span><h2>Audit pack</h2></div><p>Export the contract-bound review bundle for a policy change. The pack includes `pol_*`, `chg_*`, state, record hashes, commitments, observed snapshot hashes, challenge deadline, retry ancestry, and the transition log.</p><div className="actions three"><button className="secondary" onClick={readTimeline}>Read timeline</button><button onClick={readAudit}>Load audit pack</button><button className="secondary" onClick={copyAuditPack}>Copy pack</button></div><button className="secondary wide" onClick={downloadAuditPack}>Download JSON evidence</button><div className="audit-grid"><pre>{timeline || "No timeline loaded yet."}</pre><pre>{auditPack || "No audit pack loaded yet."}</pre></div></section>
     </section>
   </main>;
 }

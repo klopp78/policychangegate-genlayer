@@ -7,6 +7,7 @@ from dataclasses import dataclass
 class Assessment:
     state: str
     deadline: int
+    transition_log: list
 
 
 class GateModel:
@@ -27,7 +28,7 @@ class GateModel:
         assert self.policy_id and not self.active
         self.change_count += 1
         change_id = f"chg_{self.change_count}"
-        self.assessments[change_id] = Assessment("ASSESSED", self.now + 10)
+        self.assessments[change_id] = Assessment("ASSESSED", self.now + 10, ["ASSESSED"])
         self.active = change_id
         return change_id
 
@@ -35,11 +36,13 @@ class GateModel:
         item = self.assessments[change_id]
         assert item.state == "ASSESSED" and self.now <= item.deadline
         item.state = "CHALLENGED"
+        item.transition_log.append("CHALLENGED")
 
     def resolve(self, change_id, uphold):
         item = self.assessments[change_id]
         assert item.state == "CHALLENGED"
         item.state = "RESOLVED_UPHELD" if uphold else "RESOLVED_OVERTURNED"
+        item.transition_log.append(item.state)
         if not uphold:
             self.active = ""
 
@@ -47,7 +50,12 @@ class GateModel:
         item = self.assessments[change_id]
         assert item.state in ("ASSESSED", "RESOLVED_UPHELD") and self.now >= item.deadline
         item.state = "FINALIZED"
+        item.transition_log.append("FINALIZED")
         self.active = ""
+
+    def audit_pack(self, change_id):
+        item = self.assessments[change_id]
+        return {"assessment_id": change_id, "state": item.state, "transition_log": item.transition_log}
 
 
 def test_register_assess_challenge_resolve_and_finalize():
@@ -91,8 +99,21 @@ def test_challenge_window_blocks_late_challenge_and_early_finalization():
         raise AssertionError("late challenge was allowed")
 
 
+def test_audit_pack_preserves_transition_log():
+    gate = GateModel()
+    gate.register()
+    change = gate.assess()
+    gate.challenge(change)
+    gate.resolve(change, uphold=True)
+    pack = gate.audit_pack(change)
+    assert pack["assessment_id"] == "chg_1"
+    assert pack["state"] == "RESOLVED_UPHELD"
+    assert pack["transition_log"] == ["ASSESSED", "CHALLENGED", "RESOLVED_UPHELD"]
+
+
 if __name__ == "__main__":
     test_register_assess_challenge_resolve_and_finalize()
     test_overturned_challenge_releases_policy_for_retry()
     test_challenge_window_blocks_late_challenge_and_early_finalization()
+    test_audit_pack_preserves_transition_log()
     print("PolicyChangeGate lifecycle tests passed")

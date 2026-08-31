@@ -6,10 +6,11 @@ ast.parse(source)
 
 for required in (
     "register_policy", "assess_change", "challenge_change", "resolve_challenge", "retry_change", "finalize_change",
-    "get_latest_policy_id", "get_latest_assessment_id", "CHALLENGE_WINDOW_SECONDS",
-    "challenge_window_still_open", "RESOLVED_UPHELD", "RESOLVED_OVERTURNED", "observed_snapshot_hashes",
+    "get_latest_policy_id", "get_latest_assessment_id", "get_policy_timeline", "get_audit_pack",
+    "CHALLENGE_WINDOW_SECONDS", "challenge_window_still_open", "RESOLVED_UPHELD", "RESOLVED_OVERTURNED",
+    "observed_snapshot_hashes", "transition_log", "policy_record_hash", "assessment_record_hash",
 ):
     if required not in source:
         raise SystemExit(f"missing required control: {required}")
 
-print("PolicyChangeGate v2 contract structure check passed")
+print("PolicyChangeGate audit-pack contract structure check passed")

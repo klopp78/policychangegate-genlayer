@@ -6,8 +6,9 @@ The web app connects a Studio wallet to register baselines, request consensus
 assessment for a candidate policy URL, submit a challenge, resolve it, finalize
 an eligible change, and read exact persistent contract records.
 
-- Contract v2: `0x2AA8243bBF30148557Bdbf6f34aC07c31DACea41`
-- Explorer: https://explorer-studio.genlayer.com/address/0x2AA8243bBF30148557Bdbf6f34aC07c31DACea41
+- Contract v3: `0x59C1bdd86DC9cdbA1866517307325120094b1FE4`
+- Current accepted contract v2: `0x2AA8243bBF30148557Bdbf6f34aC07c31DACea41`
+- Explorer: https://explorer-studio.genlayer.com/address/0x59C1bdd86DC9cdbA1866517307325120094b1FE4
 - Source: https://github.com/klopp78/policychangegate-genlayer
 
 PolicyChangeGate is a challengeable authorization workflow for public policy,
@@ -30,6 +31,17 @@ immutable URL/rendered-source commitments. An upheld challenge can finalize
 only after the window closes; an overturned challenge releases the policy for a
 new `retry_change` assessment. Validators compare structured decisions and
 stable commitments rather than exact dynamic page HTML.
+
+## Audit Pack milestone
+
+The new milestone adds contract-native audit exports for reviewers and downstream
+builders. `get_audit_pack` returns a JSON evidence bundle tied to the accepted
+`chg_*` record: policy and assessment record hashes, baseline/candidate/challenge
+commitments, observed snapshot hashes, challenge deadline, retry ancestry, and a
+transition log for assess, challenge, resolve, and finalize. `get_policy_timeline`
+lists all `chg_*` records for a policy. The frontend now includes an Audit Pack
+workspace that reads these views from GenLayer and provides copy/download actions
+for review packets.
 
 ## Verification
 

@@ -46,6 +46,38 @@ class PolicyChangeGate(gl.Contract):
     def list_assessment_ids(self) -> str:
         return json.dumps([item for item in self.assessment_ids], separators=(",", ":"))
 
+    @gl.public.view
+    def get_policy_timeline(self, policy_id: str) -> str:
+        _load_policy(self, policy_id)
+        return json.dumps([item for item in self.assessment_ids if _belongs_to_policy(self, item, policy_id)], separators=(",", ":"))
+
+    @gl.public.view
+    def get_audit_pack(self, assessment_id: str) -> str:
+        assessment_raw = self.assessments.get(assessment_id, "")
+        if not assessment_raw:
+            raise Exception("assessment_not_found")
+        assessment = json.loads(assessment_raw)
+        policy_raw = self.policies.get(assessment["policy_id"], "")
+        if not policy_raw:
+            raise Exception("policy_not_found")
+        policy = json.loads(policy_raw)
+        return _dump({
+            "schema": "policychangegate.audit.v1",
+            "policy_id": assessment["policy_id"],
+            "assessment_id": assessment_id,
+            "state": assessment["state"],
+            "policy_record_hash": _hash(policy_raw),
+            "assessment_record_hash": _hash(assessment_raw),
+            "baseline_commitment": assessment["baseline_commitment"],
+            "candidate_commitment": assessment["candidate_commitment"],
+            "source_commitment": assessment["source_commitment"],
+            "challenge_commitment": assessment["challenge_commitment"],
+            "observed_snapshot_hashes": assessment["result"].get("observed_snapshot_hashes", []),
+            "transition_log": assessment["transition_log"],
+            "challenge_deadline": assessment["challenge_deadline"],
+            "retry_of": assessment["retry_of"],
+        })
+
     @gl.public.write
     def register_policy(self, policy_url: str, governance_rules: str) -> str:
         policy_url = _canonical_url(policy_url)
@@ -92,6 +124,7 @@ class PolicyChangeGate(gl.Contract):
             "challenged_by": str(gl.message.sender_address).lower(),
             "challenged_at": _now(),
         })
+        _append_transition(assessment, "CHALLENGED")
         self.assessments[assessment_id] = _dump(assessment)
         return assessment_id
 
@@ -126,6 +159,7 @@ class PolicyChangeGate(gl.Contract):
             assessment["state"] = "RESOLVED_OVERTURNED"
             policy["active_assessment_id"] = ""
             self.policies[assessment["policy_id"]] = _dump(policy)
+        _append_transition(assessment, assessment["state"])
         self.assessments[assessment_id] = _dump(assessment)
         return assessment_id
 
@@ -158,6 +192,7 @@ class PolicyChangeGate(gl.Contract):
             "version": int(policy["version"]) + 1,
         })
         assessment.update({"state": "FINALIZED", "finalized_at": _now()})
+        _append_transition(assessment, "FINALIZED")
         self.policies[assessment["policy_id"]] = _dump(policy)
         self.assessments[assessment_id] = _dump(assessment)
         return assessment_id
@@ -196,12 +231,15 @@ def _create_assessment(contract: PolicyChangeGate, policy: dict, policy_id: str,
         "created_at": now,
         "challenge_deadline": now + CHALLENGE_WINDOW_SECONDS,
         "result": result,
+        "baseline_commitment": policy["baseline_commitment"],
+        "candidate_commitment": _hash(candidate_url),
         "source_commitment": commitment,
         "retry_of": retry_of,
         "challenge_url": "",
         "challenge_commitment": "",
         "resolution": {},
         "accepted_write": {"assessment_id": assessment_id, "sequence": int(contract.assessment_count)},
+        "transition_log": [{"state": "ASSESSED", "at": now, "actor": str(gl.message.sender_address).lower()}],
     })
     policy["active_assessment_id"] = assessment_id
     contract.policies[policy_id] = _dump(policy)
@@ -254,9 +292,22 @@ def _load_assessment(contract: PolicyChangeGate, assessment_id: str) -> dict:
     return json.loads(raw)
 
 
+def _belongs_to_policy(contract: PolicyChangeGate, assessment_id: str, policy_id: str) -> bool:
+    raw = contract.assessments.get(assessment_id, "")
+    if not raw:
+        return False
+    return json.loads(raw).get("policy_id") == policy_id
+
+
 def _require_owner(policy: dict):
     if str(gl.message.sender_address).lower() != policy["owner"]:
         raise Exception("only_policy_owner")
+
+
+def _append_transition(assessment: dict, state: str):
+    log = assessment.get("transition_log", [])
+    log.append({"state": state, "at": _now(), "actor": str(gl.message.sender_address).lower()})
+    assessment["transition_log"] = log
 
 
 def _canonical_url(raw: str) -> str:
