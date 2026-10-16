@@ -43,6 +43,18 @@ lists all `chg_*` records for a policy. The frontend now includes an Audit Pack
 workspace that reads these views from GenLayer and provides copy/download actions
 for review packets.
 
+## Guardian approval milestone
+
+The v4 milestone adds a real multi-party execution boundary to the policy
+lifecycle. Before assessing a candidate, the policy owner may call
+`set_guardians` with a bounded JSON list of Studio addresses and a threshold.
+The resulting SHA-256 guardian commitment is snapshotted into every `chg_*`
+assessment. Once its challenge window closes, only configured guardians can
+produce an `apr_*` approval receipt through `approve_change`. Finalization now
+requires both a consensus-acceptable decision and the frozen threshold of
+guardian receipts. `get_guardian_status` and `get_audit_pack` expose the
+threshold, commitment, and immutable receipts for downstream verification.
+
 ## Verification
 
 ```powershell

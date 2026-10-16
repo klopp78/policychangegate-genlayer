@@ -2,6 +2,7 @@
 
 from genlayer import *
 from datetime import datetime, timezone
+import hashlib
 import json
 
 
@@ -13,14 +14,19 @@ class PolicyChangeGate(gl.Contract):
 
     policy_count: u64
     assessment_count: u64
+    approval_count: u64
     policies: TreeMap[str, str]
     assessments: TreeMap[str, str]
+    approvals: TreeMap[str, str]
+    approval_keys: TreeMap[str, bool]
     policy_ids: DynArray[str]
     assessment_ids: DynArray[str]
+    approval_ids: DynArray[str]
 
     def __init__(self):
         self.policy_count = u64(0)
         self.assessment_count = u64(0)
+        self.approval_count = u64(0)
 
     @gl.public.view
     def get_policy(self, policy_id: str) -> str:
@@ -29,6 +35,20 @@ class PolicyChangeGate(gl.Contract):
     @gl.public.view
     def get_assessment(self, assessment_id: str) -> str:
         return self.assessments.get(assessment_id, "")
+
+    @gl.public.view
+    def get_guardian_status(self, assessment_id: str) -> str:
+        assessment = _load_assessment(self, assessment_id)
+        config = assessment["guardian_config"]
+        approvals = [_load_json(self.approvals.get(approval_id, "")) for approval_id in assessment["approval_ids"]]
+        return _dump({
+            "assessment_id": assessment_id,
+            "required": config["threshold"],
+            "approved": len(approvals),
+            "ready": len(approvals) >= int(config["threshold"]),
+            "guardian_commitment": config["commitment"],
+            "approvals": approvals,
+        })
 
     @gl.public.view
     def get_latest_policy_id(self) -> str:
@@ -76,6 +96,8 @@ class PolicyChangeGate(gl.Contract):
             "transition_log": assessment["transition_log"],
             "challenge_deadline": assessment["challenge_deadline"],
             "retry_of": assessment["retry_of"],
+            "guardian_config": assessment["guardian_config"],
+            "guardian_status": json.loads(self.get_guardian_status(assessment_id)),
         })
 
     @gl.public.write
@@ -92,12 +114,27 @@ class PolicyChangeGate(gl.Contract):
             "baseline_url": policy_url,
             "governance_rules": rules[:800],
             "baseline_commitment": _hash(policy_url + "|" + rules),
+            "guardian_config": _guardian_config([], 0),
             "active_assessment_id": "",
             "version": 1,
             "created_at": _now(),
         })
         self.policy_ids.append(policy_id)
         return policy_id
+
+    @gl.public.write
+    def set_guardians(self, policy_id: str, guardians_json: str, approval_threshold: str) -> str:
+        """Set the guardian threshold only while no change is in flight."""
+        policy = _load_policy(self, policy_id)
+        _require_owner(policy)
+        if policy["active_assessment_id"]:
+            raise Exception("cannot_change_guardians_during_active_assessment")
+        guardians = _parse_guardians(guardians_json)
+        threshold = _threshold(approval_threshold, len(guardians))
+        policy["guardian_config"] = _guardian_config(guardians, threshold)
+        policy["guardian_updated_at"] = _now()
+        self.policies[policy_id] = _dump(policy)
+        return policy["guardian_config"]["commitment"]
 
     @gl.public.write
     def assess_change(self, policy_id: str, candidate_url: str) -> str:
@@ -175,6 +212,35 @@ class PolicyChangeGate(gl.Contract):
         return _create_assessment(self, policy, overturned["policy_id"], candidate_url, overturned_assessment_id)
 
     @gl.public.write
+    def approve_change(self, assessment_id: str) -> str:
+        """A configured guardian signs a post-window authorization receipt."""
+        assessment = _load_assessment(self, assessment_id)
+        if assessment["state"] not in ("ASSESSED", "RESOLVED_UPHELD"):
+            raise Exception("assessment_cannot_receive_guardian_approval")
+        if _now() < int(assessment["challenge_deadline"]):
+            raise Exception("guardian_approval_window_not_open")
+        guardian = str(gl.message.sender_address).lower()
+        config = assessment["guardian_config"]
+        if guardian not in config["guardians"]:
+            raise Exception("caller_is_not_configured_guardian")
+        key = _hash(_canonical_json([assessment_id, guardian, config["commitment"]]))
+        if self.approval_keys.get(key, False):
+            raise Exception("guardian_already_approved_assessment")
+        self.approval_count = u64(int(self.approval_count) + 1)
+        approval_id = "apr_" + str(int(self.approval_count))
+        receipt = {
+            "approval_id": approval_id, "assessment_id": assessment_id, "guardian": guardian,
+            "guardian_commitment": config["commitment"], "approved_at": _now(),
+        }
+        self.approvals[approval_id] = _dump(receipt)
+        self.approval_keys[key] = True
+        assessment["approval_ids"].append(approval_id)
+        _append_transition(assessment, "GUARDIAN_APPROVED")
+        self.assessments[assessment_id] = _dump(assessment)
+        self.approval_ids.append(approval_id)
+        return approval_id
+
+    @gl.public.write
     def finalize_change(self, assessment_id: str) -> str:
         assessment = _load_assessment(self, assessment_id)
         policy = _load_policy(self, assessment["policy_id"])
@@ -185,6 +251,9 @@ class PolicyChangeGate(gl.Contract):
             raise Exception("challenge_window_still_open")
         if assessment["result"]["decision"] not in ("NON_MATERIAL", "MATERIAL_ACCEPTABLE"):
             raise Exception("consensus_did_not_authorize_change")
+        required = int(assessment["guardian_config"]["threshold"])
+        if len(assessment["approval_ids"]) < required:
+            raise Exception("guardian_approval_threshold_not_met")
         policy.update({
             "baseline_url": assessment["candidate_url"],
             "baseline_commitment": assessment["source_commitment"],
@@ -238,6 +307,8 @@ def _create_assessment(contract: PolicyChangeGate, policy: dict, policy_id: str,
         "challenge_url": "",
         "challenge_commitment": "",
         "resolution": {},
+        "guardian_config": policy["guardian_config"],
+        "approval_ids": [],
         "accepted_write": {"assessment_id": assessment_id, "sequence": int(contract.assessment_count)},
         "transition_log": [{"state": "ASSESSED", "at": now, "actor": str(gl.message.sender_address).lower()}],
     })
@@ -266,14 +337,14 @@ def _resolve_with_challenge(assessment: dict, commitment: str) -> str:
 
 def _parse_evaluation(raw: str) -> dict:
     data = json.loads(raw)
-    if data.get("decision") not in ("NON_MATERIAL", "MATERIAL_ACCEPTABLE", "MATERIAL_REJECTED", "INSUFFICIENT") or int(data.get("risk_score", -1)) < 0 or int(data.get("risk_score", 101)) > 100 or not str(data.get("source_commitment", "")).startswith("h"):
+    if data.get("decision") not in ("NON_MATERIAL", "MATERIAL_ACCEPTABLE", "MATERIAL_REJECTED", "INSUFFICIENT") or int(data.get("risk_score", -1)) < 0 or int(data.get("risk_score", 101)) > 100 or not _is_digest(data.get("source_commitment", "")):
         raise Exception("invalid_evaluation")
     return data
 
 
 def _parse_resolution(raw: str) -> dict:
     data = json.loads(raw)
-    if data.get("resolution") not in ("UPHOLD", "OVERTURN") or not str(data.get("source_commitment", "")).startswith("h"):
+    if data.get("resolution") not in ("UPHOLD", "OVERTURN") or not _is_digest(data.get("source_commitment", "")):
         raise Exception("invalid_resolution")
     return data
 
@@ -318,7 +389,7 @@ def _canonical_url(raw: str) -> str:
 
 
 def _source_commitment(*parts: str) -> str:
-    return _hash("|".join(parts))
+    return _hash(_canonical_json(list(parts)))
 
 
 def _now() -> int:
@@ -326,11 +397,60 @@ def _now() -> int:
 
 
 def _hash(value: str) -> str:
-    acc = 2166136261
-    for char in value:
-        acc = (acc ^ ord(char)) * 16777619 % 4294967296
-    return "h" + hex(acc)[2:].rjust(8, "0")
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _is_digest(value) -> bool:
+    value = str(value)
+    return len(value) == 64 and all(char in "0123456789abcdef" for char in value)
+
+
+def _canonical_json(value) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _guardian_config(guardians: list, threshold: int) -> dict:
+    canonical_guardians = sorted(guardians)
+    return {
+        "guardians": canonical_guardians,
+        "threshold": threshold,
+        "commitment": _hash(_canonical_json({"guardians": canonical_guardians, "threshold": threshold})),
+    }
+
+
+def _parse_guardians(raw: str) -> list:
+    try:
+        values = json.loads(raw)
+    except Exception:
+        raise Exception("guardians_must_be_json_array")
+    if not isinstance(values, list) or len(values) > 12:
+        raise Exception("invalid_guardian_set")
+    guardians = []
+    for value in values:
+        address = str(value).lower().strip()
+        if len(address) != 42 or not address.startswith("0x") or any(char not in "0123456789abcdef" for char in address[2:]):
+            raise Exception("invalid_guardian_address")
+        if address in guardians:
+            raise Exception("duplicate_guardian")
+        guardians.append(address)
+    return guardians
+
+
+def _threshold(raw: str, guardian_count: int) -> int:
+    try:
+        value = int(str(raw))
+    except Exception:
+        raise Exception("invalid_guardian_threshold")
+    if value < 0 or value > guardian_count:
+        raise Exception("guardian_threshold_out_of_range")
+    return value
+
+
+def _load_json(raw: str) -> dict:
+    if not raw:
+        raise Exception("approval_not_found")
+    return json.loads(raw)
 
 
 def _dump(value: dict) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return _canonical_json(value)

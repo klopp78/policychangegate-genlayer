@@ -8,6 +8,9 @@ class Assessment:
     state: str
     deadline: int
     transition_log: list
+    guardians: list
+    threshold: int
+    approvals: list
 
 
 class GateModel:
@@ -24,11 +27,11 @@ class GateModel:
         self.policy_id = f"pol_{self.policy_count}"
         return self.policy_id
 
-    def assess(self):
+    def assess(self, guardians=None, threshold=0):
         assert self.policy_id and not self.active
         self.change_count += 1
         change_id = f"chg_{self.change_count}"
-        self.assessments[change_id] = Assessment("ASSESSED", self.now + 10, ["ASSESSED"])
+        self.assessments[change_id] = Assessment("ASSESSED", self.now + 10, ["ASSESSED"], guardians or [], threshold, [])
         self.active = change_id
         return change_id
 
@@ -49,13 +52,20 @@ class GateModel:
     def finalize(self, change_id):
         item = self.assessments[change_id]
         assert item.state in ("ASSESSED", "RESOLVED_UPHELD") and self.now >= item.deadline
+        assert len(item.approvals) >= item.threshold
         item.state = "FINALIZED"
         item.transition_log.append("FINALIZED")
         self.active = ""
 
     def audit_pack(self, change_id):
         item = self.assessments[change_id]
-        return {"assessment_id": change_id, "state": item.state, "transition_log": item.transition_log}
+        return {"assessment_id": change_id, "state": item.state, "transition_log": item.transition_log, "guardians": item.guardians, "approvals": item.approvals}
+
+    def approve(self, change_id, guardian):
+        item = self.assessments[change_id]
+        assert self.now >= item.deadline and guardian in item.guardians and guardian not in item.approvals
+        item.approvals.append(guardian)
+        item.transition_log.append("GUARDIAN_APPROVED")
 
 
 def test_register_assess_challenge_resolve_and_finalize():
@@ -111,9 +121,28 @@ def test_audit_pack_preserves_transition_log():
     assert pack["transition_log"] == ["ASSESSED", "CHALLENGED", "RESOLVED_UPHELD"]
 
 
+def test_guardian_threshold_is_a_real_finalization_boundary():
+    gate = GateModel()
+    gate.register()
+    change = gate.assess(["guardian-a", "guardian-b"], threshold=2)
+    gate.now = 110
+    gate.approve(change, "guardian-a")
+    try:
+        gate.finalize(change)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("a single guardian bypassed a 2-of-2 threshold")
+    gate.approve(change, "guardian-b")
+    gate.finalize(change)
+    pack = gate.audit_pack(change)
+    assert pack["approvals"] == ["guardian-a", "guardian-b"]
+
+
 if __name__ == "__main__":
     test_register_assess_challenge_resolve_and_finalize()
     test_overturned_challenge_releases_policy_for_retry()
     test_challenge_window_blocks_late_challenge_and_early_finalization()
     test_audit_pack_preserves_transition_log()
+    test_guardian_threshold_is_a_real_finalization_boundary()
     print("PolicyChangeGate lifecycle tests passed")
