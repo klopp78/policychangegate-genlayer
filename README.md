@@ -6,9 +6,9 @@ The web app connects a Studio wallet to register baselines, request consensus
 assessment for a candidate policy URL, submit a challenge, resolve it, finalize
 an eligible change, and read exact persistent contract records.
 
-- Contract v3: `0x59C1bdd86DC9cdbA1866517307325120094b1FE4`
+- Contract v4: `0x029A6fC01668C2fB25CBd6199E6f33529b4BafEb`
 - Current accepted contract v2: `0x2AA8243bBF30148557Bdbf6f34aC07c31DACea41`
-- Explorer: https://explorer-studio.genlayer.com/address/0x59C1bdd86DC9cdbA1866517307325120094b1FE4
+- Explorer: https://explorer-studio.genlayer.com/address/0x029A6fC01668C2fB25CBd6199E6f33529b4BafEb
 - Source: https://github.com/klopp78/policychangegate-genlayer
 
 PolicyChangeGate is a challengeable authorization workflow for public policy,

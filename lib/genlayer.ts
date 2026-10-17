@@ -2,7 +2,7 @@ import { createClient } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import { TransactionStatus } from "genlayer-js/types";
 
-export const POLICY_CHANGE_GATE_ADDRESS = "0x59C1bdd86DC9cdbA1866517307325120094b1FE4" as const;
+export const POLICY_CHANGE_GATE_ADDRESS = "0x029A6fC01668C2fB25CBd6199E6f33529b4BafEb" as const;
 export type WalletAddress = `0x${string}`;
 
 function client(account?: WalletAddress) { return createClient({ chain: studionet, account }); }
